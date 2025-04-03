@@ -1,8 +1,10 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
+let eraserCursorGlobal = null;
 import * as fabric from "fabric";
 import Toolbar from "./Toolbar";
+import Header from "./Header";
 
 export default function Canvas() {
   const canvasRef = useRef(null);
@@ -41,18 +43,13 @@ export default function Canvas() {
   useEffect(() => {
     updateTool(selectedTool);
   }, [selectedTool]);
-
-  // Main function: Remove any previous listeners and add new ones for the selected tool.
   const updateTool = (tool) => {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
 
-    // Remove existing mouse event listeners
     canvas.off("mouse:down");
     canvas.off("mouse:move");
     canvas.off("mouse:up");
-
-    // Reset defaults
     canvas.isDrawingMode = false;
     canvas.selection = false;
     canvas.defaultCursor = "default";
@@ -176,7 +173,7 @@ export default function Canvas() {
           top: pointer.y,
           width: 0,
           height: 0,
-          fill: "", // no fill
+          fill: "",
           stroke: "white",
           strokeWidth: 2,
           selectable: false,
@@ -186,7 +183,6 @@ export default function Canvas() {
       canvas.on("mouse:move", (opt) => {
         if (!currentObject.current || !startPoint.current) return;
         const pointer = canvas.getPointer(opt.e);
-        // Calculate top-left and dimensions regardless of drag direction
         const left = Math.min(startPoint.current.x, pointer.x);
         const top = Math.min(startPoint.current.y, pointer.y);
         const width = Math.abs(pointer.x - startPoint.current.x);
@@ -197,14 +193,11 @@ export default function Canvas() {
       canvas.on("mouse:up", () => {
         currentObject.current = null;
       });
-
-      // RHOMBUS: Diamond shape computed from the bounding box
     } else if (tool === "rhombus") {
       canvas.defaultCursor = "crosshair";
       canvas.on("mouse:down", (opt) => {
         const pointer = canvas.getPointer(opt.e);
         startPoint.current = { x: pointer.x, y: pointer.y };
-        // Initialize with placeholder points
         currentObject.current = new fabric.Polygon(
           [
             { x: pointer.x, y: pointer.y },
@@ -247,7 +240,6 @@ export default function Canvas() {
         currentObject.current = null;
       });
 
-      // CIRCLE: Draw an ellipse using two corner points
     } else if (tool === "circle") {
       canvas.defaultCursor = "crosshair";
       canvas.on("mouse:down", (opt) => {
@@ -281,7 +273,6 @@ export default function Canvas() {
         currentObject.current = null;
       });
 
-      // LINE: Draw a straight line between two points
     } else if (tool === "line") {
       canvas.defaultCursor = "crosshair";
       canvas.on("mouse:down", (opt) => {
@@ -355,26 +346,114 @@ export default function Canvas() {
         canvas.on("mouse:down", outsideClickHandler);
       };
       canvas.on("mouse:down", textCreationHandler);
-    }
+    } if (tool !== "eraser") {
+      if (eraserCursorGlobal && fabricCanvasRef.current) {
+        fabricCanvasRef.current.remove(eraserCursorGlobal);
+        eraserCursorGlobal = null;
+        fabricCanvasRef.current.renderAll();
+      }
+    } else if (tool === "eraser") {
+      const canvas = fabricCanvasRef.current;
+      canvas.isDrawingMode = false;
+      canvas.selection = false;
+      canvas.defaultCursor = "none";
     
-   
-    else if (tool === "image") {
-      canvas.defaultCursor = "pointer";
-      canvas.on("mouse:down", (opt) => {
-        const url = prompt("Enter image URL:");
-        if (url) {
-          fabric.Image.fromURL(url, (img) => {
-            const pointer = canvas.getPointer(opt.e);
-            img.set({ left: pointer.x, top: pointer.y, selectable: true });
-            canvas.add(img);
-          });
+      const eraserSize = 15;
+      eraserCursorGlobal = new fabric.Circle({
+        radius: eraserSize / 2,
+        stroke: "white",
+        strokeWidth: 2,
+        fill: "transparent",
+        originX: "center",
+        originY: "center",
+        selectable: false,
+        evented: false,
+      });
+      canvas.add(eraserCursorGlobal);
+    
+      let isErasing = false;
+    
+      function updateEraser(event) {
+        if (!eraserCursorGlobal) return;
+        const pointer = canvas.getPointer(event.e);
+        eraserCursorGlobal.set({ left: pointer.x, top: pointer.y });
+        // To keep the cursor on top, remove and re-add it
+        canvas.remove(eraserCursorGlobal);
+        canvas.add(eraserCursorGlobal);
+        canvas.renderAll();
+        if (isErasing) {
+          eraseAt(pointer);
+        }
+      }
+    
+      canvas.on("mouse:move", updateEraser);
+    
+      canvas.on("mouse:down", function (event) {
+        isErasing = true;
+        updateEraser(event);
+      });
+    
+      canvas.on("mouse:up", function () {
+        isErasing = false;
+        setTimeout(() => {
+          if (eraserCursorGlobal) {
+            canvas.remove(eraserCursorGlobal);
+            eraserCursorGlobal = null;
+            canvas.renderAll();
+          }
+        }, 100);
+      });
+    
+      function eraseAt(pointer) {
+        canvas.forEachObject((obj) => {
+          if (obj === eraserCursorGlobal) return;
+          if (obj.type === "path") {
+            const bounds = obj.getBoundingRect();
+            if (
+              pointer.x >= bounds.left &&
+              pointer.x <= bounds.left + bounds.width &&
+              pointer.y >= bounds.top &&
+              pointer.y <= bounds.top + bounds.height
+            ) {
+              canvas.remove(obj);
+            }
+          }
+        });
+        canvas.renderAll();
+      }
+    
+      document.addEventListener("mousemove", function (event) {
+        const rect = canvas.wrapperEl.getBoundingClientRect();
+        if (
+          event.clientX < rect.left ||
+          event.clientX > rect.right ||
+          event.clientY < rect.top ||
+          event.clientY > rect.bottom
+        ) {
+          if (eraserCursorGlobal) {
+            canvas.remove(eraserCursorGlobal);
+            eraserCursorGlobal = null;
+            canvas.renderAll();
+          }
+        } else {
+          if (!eraserCursorGlobal && tool === "eraser") {
+            eraserCursorGlobal = new fabric.Circle({
+              radius: eraserSize / 2,
+              stroke: "white",
+              strokeWidth: 2,
+              fill: "transparent",
+              originX: "center",
+              originY: "center",
+              selectable: false,
+              evented: false,
+            });
+            canvas.add(eraserCursorGlobal);
+            canvas.renderAll();
+          }
         }
       });
-
-      // ERASER: Remove objects under the pointer while dragging
-    } 
+    }    
   }
-
   const handleToolChange = (tool) => {
     setSelectedTool(tool);
   };
@@ -388,6 +467,7 @@ export default function Canvas() {
         backgroundSize: "40px 40px",
       }}
     >
+      <Header />
       <Toolbar onToolChange={handleToolChange} />
       <canvas
         id="drawing-canvas"
